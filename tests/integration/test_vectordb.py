@@ -5,6 +5,7 @@ VectorDB 통합 테스트.
 Alembic 마이그레이션이 먼저 적용되어 있어야 합니다 (alembic upgrade head).
 """
 import pytest
+import pytest_asyncio
 
 from src.config import config
 
@@ -22,7 +23,7 @@ def _fake_embedding(seed: int = 0) -> list[float]:
     return [x / norm for x in vec]
 
 
-@pytest.fixture(autouse=True)
+@pytest_asyncio.fixture(autouse=True, loop_scope="module")
 async def clean_table(db):
     """각 테스트 전후 documents 테이블 초기화."""
     async with db._pool.acquire() as conn:
@@ -63,7 +64,7 @@ async def test_search_returns_top_k(db):
     for content, title, score in results:
         assert isinstance(content, str)
         assert isinstance(score, float)
-        assert 0.0 <= score <= 1.01  # 부동소수점 허용 오차
+        assert 0.0 <= score <= 1.01
 
 
 async def test_search_similarity_descending(db):
