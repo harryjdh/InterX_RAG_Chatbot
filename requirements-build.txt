@@ -1,0 +1,7 @@
+-r requirements.txt
+datasets==4.8.4
+tqdm==4.67.3
+alembic==1.14.0
+sqlalchemy[asyncio]==2.0.38
+greenlet==3.1.1
+mako==1.3.8

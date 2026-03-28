@@ -1,0 +1,102 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: rag_postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ragdb}
+      POSTGRES_USER: ${POSTGRES_USER:-raguser}
+      # 프로덕션에서는 .env 파일에 강력한 패스워드를 설정하세요
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ragpassword}
+    expose:
+      - "5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-raguser} -d ${POSTGRES_DB:-ragdb}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - rag-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: rag_redis
+    expose:
+      - "6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - rag-network
+
+  api:
+    build: .
+    container_name: rag_api
+    restart: unless-stopped
+    stop_grace_period: 35s
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://redis:6379
+      WORKERS: 4
+      LOG_LEVEL: INFO
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - rag-network
+
+  build-vectordb:
+    build:
+      context: .
+      dockerfile: Dockerfile.build
+    container_name: rag_build
+    command: python -m scripts.build_vectordb --limit 0 --skip-confirm
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: postgres
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles:
+      - build
+    networks:
+      - rag-network
+
+volumes:
+  pgdata:
+
+networks:
+  rag-network:
+    driver: bridge

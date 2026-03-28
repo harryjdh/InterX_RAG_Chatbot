@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+openai
+asyncpg
+pgvector
+pydantic-settings
+numpy
+pydantic
+prometheus-fastapi-instrumentator
+prometheus-client
+slowapi
+redis[asyncio]
