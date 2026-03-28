@@ -27,6 +27,9 @@ async def retry(
             return await func(*args, **kwargs)
         except non_retryable:
             raise
+        except asyncio.TimeoutError:
+            # 외부 asyncio.timeout() 스코프에서 발생한 타임아웃 — 재시도해도 즉시 재발하므로 전파
+            raise
         except Exception as e:
             if attempt == retries - 1:
                 raise

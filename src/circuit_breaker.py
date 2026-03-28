@@ -58,10 +58,6 @@ class CircuitBreaker:
     def _key(self, field: str) -> str:
         return f"cb:{self._name}:{field}"
 
-    @property
-    def state(self) -> CircuitState:
-        return self._state
-
     async def call(self, func: Callable, *args, **kwargs):
         """서킷 브레이커를 통해 비동기 함수를 호출합니다."""
         await self._check_state()
@@ -90,7 +86,7 @@ class CircuitBreaker:
         results = await pipe.execute()
 
         raw_state = results[0]
-        state = CircuitState(raw_state.decode() if raw_state else CircuitState.CLOSED.value)
+        state = CircuitState(raw_state if raw_state else CircuitState.CLOSED.value)
         failures = int(results[1] or 0)
         successes = int(results[2] or 0)
         opened_at = float(results[3] or 0.0)
@@ -134,7 +130,7 @@ class CircuitBreaker:
             if state == CircuitState.OPEN:
                 elapsed = time.time() - opened_at
                 if elapsed >= self._recovery_timeout:
-                    await self._set_state(CircuitState.HALF_OPEN, failures, 0, opened_at)
+                    await self._set_state(CircuitState.HALF_OPEN, 0, 0, opened_at)
                     logger.info(
                         "서킷 브레이커 [%s] HALF_OPEN 전환 (%.1fs 경과)",
                         self._name,

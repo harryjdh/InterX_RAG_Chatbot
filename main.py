@@ -197,29 +197,35 @@ async def chat_stream(request: Request, response: Response, body: ChatRequest, r
     - `event: done` / `data: [DONE]` — 스트림 종료
     """
     async def event_generator():
+        # 미들웨어가 request_id_var를 리셋한 후에도 스트리밍 구간 로그에 request_id가
+        # 올바르게 기록되도록 제너레이터 진입 시점에 컨텍스트를 재설정합니다.
+        _token = request_id_var.set(request.state.request_id)
         try:
-            async with asyncio.timeout(config.REQUEST_TIMEOUT):
-                async for chunk in rag.answer_stream(body.query):
-                    data = json.dumps({"delta": chunk}, ensure_ascii=False)
-                    yield f"event: delta\ndata: {data}\n\n"
-        except asyncio.TimeoutError:
-            error = json.dumps({"error": "요청 시간이 초과되었습니다.", "type": StreamErrorType.TIMEOUT}, ensure_ascii=False)
-            yield f"event: error\ndata: {error}\n\n"
-        except RetrievalError as e:
-            error = json.dumps({"error": str(e), "type": StreamErrorType.RETRIEVAL}, ensure_ascii=False)
-            yield f"event: error\ndata: {error}\n\n"
-        except LLMError as e:
-            error = json.dumps({"error": str(e), "type": StreamErrorType.LLM}, ensure_ascii=False)
-            yield f"event: error\ndata: {error}\n\n"
-        except CircuitBreakerOpen as e:
-            error = json.dumps({"error": str(e), "type": StreamErrorType.CIRCUIT_OPEN}, ensure_ascii=False)
-            yield f"event: error\ndata: {error}\n\n"
-        except Exception as e:
-            logger.exception("스트리밍 중 예상치 못한 오류 발생")
-            error = json.dumps({"error": str(e), "type": StreamErrorType.UNKNOWN}, ensure_ascii=False)
-            yield f"event: error\ndata: {error}\n\n"
+            try:
+                async with asyncio.timeout(config.REQUEST_TIMEOUT):
+                    async for chunk in rag.answer_stream(body.query):
+                        data = json.dumps({"delta": chunk}, ensure_ascii=False)
+                        yield f"event: delta\ndata: {data}\n\n"
+            except asyncio.TimeoutError:
+                error = json.dumps({"error": "요청 시간이 초과되었습니다.", "type": StreamErrorType.TIMEOUT}, ensure_ascii=False)
+                yield f"event: error\ndata: {error}\n\n"
+            except RetrievalError as e:
+                error = json.dumps({"error": str(e), "type": StreamErrorType.RETRIEVAL}, ensure_ascii=False)
+                yield f"event: error\ndata: {error}\n\n"
+            except LLMError as e:
+                error = json.dumps({"error": str(e), "type": StreamErrorType.LLM}, ensure_ascii=False)
+                yield f"event: error\ndata: {error}\n\n"
+            except CircuitBreakerOpen as e:
+                error = json.dumps({"error": str(e), "type": StreamErrorType.CIRCUIT_OPEN}, ensure_ascii=False)
+                yield f"event: error\ndata: {error}\n\n"
+            except Exception as e:
+                logger.exception("스트리밍 중 예상치 못한 오류 발생")
+                error = json.dumps({"error": str(e), "type": StreamErrorType.UNKNOWN}, ensure_ascii=False)
+                yield f"event: error\ndata: {error}\n\n"
+            finally:
+                yield "event: done\ndata: [DONE]\n\n"
         finally:
-            yield "event: done\ndata: [DONE]\n\n"
+            request_id_var.reset(_token)
 
     return StreamingResponse(
         event_generator(),

@@ -74,25 +74,32 @@ class LLMClient:
         Yields text chunks, skipping <think>...</think> blocks that Qwen3 models
         may emit before the actual answer.
 
-        서킷 브레이커는 스트림 생성을 보호하고, mid-stream 재시도는 아직 클라이언트에
-        청크를 전송하지 않은 경우에만 수행합니다 (전송 후 단절은 호출자에게 전파).
+        스트림 생성과 반복을 하나의 CB 단위로 처리합니다.
+        - 스트림 생성 실패 / mid-stream 단절 모두 CB 실패로 기록됩니다.
+        - 아직 클라이언트에 청크를 전송하지 않은 경우에만 재시도합니다.
         """
         messages = self._build_messages(prompt, system_prompt, history)
 
         for attempt in range(_STREAM_RETRIES + 1):
-            # CircuitBreakerOpen은 여기서 발생하면 호출자로 직접 전파
-            stream = await self._cb.call(self._create_stream, messages)
+            # 매 시도 전 CB 상태 확인 (OPEN이면 CircuitBreakerOpen 발생)
+            await self._cb._check_state()
+
             chunks_yielded = 0
             try:
+                # _create_stream은 CB를 통하지 않음 — 성공/실패를 아래에서 명시적으로 기록
+                stream = await self._create_stream(messages)
                 async for chunk in self._iter_stream(stream):
                     chunks_yielded += 1
                     yield chunk
-                return  # 정상 완료
+                # 스트림 전체 완료 시에만 성공 기록
+                await self._cb._record_success()
+                return
             except CircuitBreakerOpen:
                 raise
             except Exception as exc:
+                # 스트림 생성 실패와 mid-stream 단절 모두 CB 실패로 기록
+                await self._cb._record_failure(exc)
                 if chunks_yielded > 0 or attempt >= _STREAM_RETRIES:
-                    # 이미 일부 청크를 전송했거나 재시도 소진 → 상위로 전파
                     raise
                 wait = min(1.0 * (2.0 ** attempt), 10.0)
                 logger.warning(
@@ -160,8 +167,11 @@ class LLMClient:
             yield buffer
 
     async def ping(self) -> bool:
-        """LLM API 연결 확인 (토큰 생성 없이 /models 엔드포인트 호출)."""
-        return await self._cb.call(self._ping_raw)
+        """LLM API 연결 확인 (토큰 생성 없이 /models 엔드포인트 호출).
+
+        헬스 체크는 CB를 통과하지 않습니다 — 반복적인 헬스 체크가 CB를 트립시키는 것을 방지합니다.
+        """
+        return await self._ping_raw()
 
     async def _ping_raw(self) -> bool:
         await self._client.models.list()

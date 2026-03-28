@@ -54,8 +54,11 @@ class EmbeddingClient:
         return [item.embedding for item in sorted_data]
 
     async def ping(self) -> bool:
-        """Embedding API 연결 확인 (임베딩 생성 없이 /models 엔드포인트 호출)."""
-        return await self._cb.call(self._ping_raw)
+        """Embedding API 연결 확인 (임베딩 생성 없이 /models 엔드포인트 호출).
+
+        헬스 체크는 CB를 통과하지 않습니다 — 반복적인 헬스 체크가 CB를 트립시키는 것을 방지합니다.
+        """
+        return await self._ping_raw()
 
     async def _ping_raw(self) -> bool:
         await self._client.models.list()

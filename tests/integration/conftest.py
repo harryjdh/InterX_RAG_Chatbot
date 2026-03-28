@@ -9,9 +9,9 @@ import pytest_asyncio
 from src.vectordb import VectorDB
 
 
-@pytest_asyncio.fixture(scope="module", loop_scope="module")
+@pytest_asyncio.fixture
 async def db():
-    """모듈 범위 VectorDB 커넥션 풀 — 테스트 완료 후 자동 정리."""
+    """테스트마다 독립적인 VectorDB 커넥션 풀 생성 및 정리."""
     vectordb = await VectorDB.create()
     yield vectordb
     await vectordb.close()

@@ -4,6 +4,8 @@ VectorDB 통합 테스트.
 실제 PostgreSQL + pgvector 인스턴스에 연결하여 end-to-end 경로를 검증합니다.
 Alembic 마이그레이션이 먼저 적용되어 있어야 합니다 (alembic upgrade head).
 """
+import math
+
 import pytest
 import pytest_asyncio
 
@@ -16,21 +18,17 @@ _DIM = config.EMBEDDING_DIM
 
 def _fake_embedding(seed: int = 0) -> list[float]:
     """재현 가능한 단위 벡터 생성 (실제 모델 호출 없음)."""
-    import math
-
     vec = [float((i + seed + 1) % 100) for i in range(_DIM)]
     norm = math.sqrt(sum(x * x for x in vec))
     return [x / norm for x in vec]
 
 
-@pytest_asyncio.fixture(autouse=True, loop_scope="module")
+@pytest_asyncio.fixture(autouse=True)
 async def clean_table(db):
-    """각 테스트 전후 documents 테이블 초기화."""
+    """각 테스트 실행 전 documents 테이블 초기화."""
     async with db._pool.acquire() as conn:
         await conn.execute("DELETE FROM documents")
     yield
-    async with db._pool.acquire() as conn:
-        await conn.execute("DELETE FROM documents")
 
 
 async def test_ping(db):
@@ -57,14 +55,13 @@ async def test_search_returns_top_k(db):
     ]
     await db.insert_batch(docs)
 
-    query = _fake_embedding(0)
-    results = await db.search(query, top_k=3)
+    results = await db.search(_fake_embedding(0), top_k=3)
 
     assert len(results) == 3
     for content, title, score in results:
         assert isinstance(content, str)
         assert isinstance(score, float)
-        assert 0.0 <= score <= 1.01
+        assert 0.0 <= score <= 1.0 + 1e-6
 
 
 async def test_search_similarity_descending(db):

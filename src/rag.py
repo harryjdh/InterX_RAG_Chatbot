@@ -62,7 +62,7 @@ class NaiveRAG:
         if config.REDIS_URL:
             from redis.asyncio import from_url as redis_from_url
 
-            redis = await redis_from_url(config.REDIS_URL, decode_responses=False)
+            redis = await redis_from_url(config.REDIS_URL, decode_responses=True)
             logger.info("Redis 연결 완료: %s (분산 CB/Rate Limiter 활성화)", config.REDIS_URL)
 
         embedder = EmbeddingClient(redis=redis)
@@ -78,13 +78,12 @@ class NaiveRAG:
             t0 = time.perf_counter()
             query_embedding = await self.embedder.embed(query)
             t1 = time.perf_counter()
+            embed_secs = t1 - t0
+            rag_embedding_duration.observe(embed_secs)  # 임베딩 완료 즉시 기록 (DB 실패와 무관)
 
             results = await self.vectordb.search(query_embedding, top_k=top_k)
             t2 = time.perf_counter()
-
-            embed_secs = t1 - t0
             search_secs = t2 - t1
-            rag_embedding_duration.observe(embed_secs)
             rag_retrieval_duration.observe(search_secs)
 
             logger.info(
