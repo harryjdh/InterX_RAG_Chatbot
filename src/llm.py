@@ -3,6 +3,8 @@ import logging
 import re
 
 import openai
+
+logger = logging.getLogger(__name__)
 from openai import AsyncOpenAI
 from typing import AsyncIterator, List, Optional
 
