@@ -3,14 +3,14 @@ import logging
 import re
 
 import openai
-
-logger = logging.getLogger(__name__)
 from openai import AsyncOpenAI
 from typing import AsyncIterator, List, Optional
 
 from .circuit_breaker import CircuitBreaker, CircuitBreakerOpen
 from .config import config
 from .retry import retry
+
+logger = logging.getLogger(__name__)
 
 # 스트림 도중 네트워크 단절 시 재연결 최대 횟수.
 # 아직 클라이언트로 청크를 전송하지 않은 경우에만 재시도합니다.

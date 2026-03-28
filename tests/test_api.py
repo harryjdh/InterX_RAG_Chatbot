@@ -1,6 +1,8 @@
 """FastAPI 엔드포인트 통합 테스트."""
 from unittest.mock import AsyncMock
 
+from main import app
+
 
 async def test_chat_success(client):
     response = await client.post("/chat", json={"query": "서울의 인구는?"})
@@ -61,6 +63,6 @@ async def test_health_ready_degraded_when_embedding_fails(client, mock_rag):
 
 
 async def test_service_unavailable_without_rag(client):
-    del client.app.state.rag
+    del app.state.rag
     response = await client.post("/chat", json={"query": "질문"})
     assert response.status_code == 503

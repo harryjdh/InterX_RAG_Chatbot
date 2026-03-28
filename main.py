@@ -7,7 +7,7 @@ from contextvars import ContextVar
 from datetime import datetime, timezone
 from enum import Enum
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from prometheus_fastapi_instrumentator import Instrumentator
 from pydantic import BaseModel, Field, field_validator
@@ -175,7 +175,7 @@ class ReadyResponse(BaseModel):
 
 @app.post("/chat", response_model=ChatResponse, summary="챗봇 질의 (non-streaming)")
 @limiter.limit(config.RATE_LIMIT)
-async def chat(request: Request, body: ChatRequest, rag: NaiveRAG = Depends(get_rag)):
+async def chat(request: Request, response: Response, body: ChatRequest, rag: NaiveRAG = Depends(get_rag)):
     """
     질문을 입력받아 RAG를 통해 생성된 답변을 반환합니다.
     전체 답변이 완성된 후 한 번에 반환됩니다.
@@ -187,7 +187,7 @@ async def chat(request: Request, body: ChatRequest, rag: NaiveRAG = Depends(get_
 
 @app.post("/chat/stream", summary="챗봇 질의 (streaming SSE)")
 @limiter.limit(config.RATE_LIMIT)
-async def chat_stream(request: Request, body: ChatRequest, rag: NaiveRAG = Depends(get_rag)):
+async def chat_stream(request: Request, response: Response, body: ChatRequest, rag: NaiveRAG = Depends(get_rag)):
     """
     질문을 입력받아 RAG를 통해 생성된 답변을 Server-Sent Events로 스트리밍합니다.
 
