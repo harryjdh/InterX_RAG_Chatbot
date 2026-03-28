@@ -96,6 +96,8 @@ class NaiveRAG:
             return results
         except CircuitBreakerOpen:
             raise
+        except asyncio.TimeoutError:
+            raise
         except Exception as e:
             raise RetrievalError(str(e)) from e
 
@@ -113,6 +115,8 @@ class NaiveRAG:
         try:
             answer = await self.llm.generate(prompt, system_prompt=SYSTEM_PROMPT)
         except CircuitBreakerOpen:
+            raise
+        except asyncio.TimeoutError:
             raise
         except Exception as e:
             raise LLMError(str(e)) from e
@@ -151,6 +155,8 @@ class NaiveRAG:
                     first_chunk = False
                 yield chunk
         except CircuitBreakerOpen:
+            raise
+        except asyncio.TimeoutError:
             raise
         except Exception as e:
             raise LLMError(str(e)) from e

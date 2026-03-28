@@ -204,6 +204,9 @@ async def chat_stream(request: Request, response: Response, body: ChatRequest, r
             try:
                 async with asyncio.timeout(config.REQUEST_TIMEOUT):
                     async for chunk in rag.answer_stream(body.query):
+                        if await request.is_disconnected():
+                            logger.info("클라이언트 연결 해제 감지 — 스트리밍 중단 [%s]", request.state.request_id)
+                            return
                         data = json.dumps({"delta": chunk}, ensure_ascii=False)
                         yield f"event: delta\ndata: {data}\n\n"
             except asyncio.TimeoutError:
