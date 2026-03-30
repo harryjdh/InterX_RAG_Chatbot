@@ -19,15 +19,27 @@ class VectorDB:
 
     @classmethod
     async def create(cls) -> "VectorDB":
-        async def _init(conn):
-            await register_vector(conn)
-
-        pool = await asyncpg.create_pool(
+        # register_vector는 pool init 시 PostgreSQL에서 vector 타입을 조회합니다.
+        # extension이 없으면 "unknown type: public.vector"로 pool 생성 자체가 실패하므로,
+        # pool 생성 전에 codec 없는 임시 커넥션으로 extension을 먼저 보장합니다.
+        _conn_args = dict(
             host=config.POSTGRES_HOST,
             port=int(config.POSTGRES_PORT),
             database=config.POSTGRES_DB,
             user=config.POSTGRES_USER,
             password=config.POSTGRES_PASSWORD.get_secret_value(),
+        )
+        _tmp = await asyncpg.connect(**_conn_args)
+        try:
+            await _tmp.execute("CREATE EXTENSION IF NOT EXISTS vector")
+        finally:
+            await _tmp.close()
+
+        async def _init(conn):
+            await register_vector(conn)
+
+        pool = await asyncpg.create_pool(
+            **_conn_args,
             min_size=config.DB_POOL_MIN_SIZE,
             max_size=config.DB_POOL_MAX_SIZE,
             command_timeout=_COMMAND_TIMEOUT,
@@ -43,7 +55,6 @@ class VectorDB:
         alembic이 이미 실행된 환경에서는 IF NOT EXISTS로 인해 아무 변화가 없습니다.
         """
         async with self._pool.acquire(timeout=_ACQUIRE_TIMEOUT) as conn:
-            await conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
             await conn.execute(f"""
                 CREATE TABLE IF NOT EXISTS documents (
                     id          SERIAL PRIMARY KEY,
@@ -54,34 +65,6 @@ class VectorDB:
                 )
             """)
         logger.info("스키마 확인 완료 (EMBEDDING_DIM=%d)", config.EMBEDDING_DIM)
-
-    async def create_index(self):
-        """
-        벡터 검색 인덱스를 생성합니다. 데이터 로드 후 호출하세요.
-
-        pgvector의 HNSW/IVFFlat 인덱스는 2000차원 이하만 지원합니다.
-        EMBEDDING_DIM > 2000이면 인덱스 없이 exact search(순차 스캔)를 사용합니다.
-        exact search는 수만 건 규모에서도 충분히 빠릅니다.
-        """
-        if config.EMBEDDING_DIM > 2000:
-            logger.info(
-                "EMBEDDING_DIM=%d > 2000 이므로 인덱스 없이 exact search를 사용합니다.",
-                config.EMBEDDING_DIM,
-            )
-            return
-
-        n = await self.count()
-        if n == 0:
-            logger.info("데이터가 없어 인덱스를 생성하지 않습니다.")
-            return
-        async with self._pool.acquire(timeout=_ACQUIRE_TIMEOUT) as conn:
-            await conn.execute("DROP INDEX IF EXISTS documents_embedding_hnsw_idx")
-            await conn.execute("""
-                CREATE INDEX documents_embedding_hnsw_idx
-                ON documents USING hnsw (embedding vector_cosine_ops)
-                WITH (m = 16, ef_construction = 64)
-            """)
-        logger.info("HNSW 인덱스 생성 완료 (문서 수=%d)", n)
 
     async def insert_batch(self, documents: List[dict]):
         """

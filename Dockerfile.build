@@ -23,7 +23,9 @@ COPY --from=builder /install /usr/local
 
 WORKDIR /app
 COPY --chown=appuser:appuser . .
+# 사전 생성된 임베딩 데이터 (embed_and_export.py로 생성)
+COPY --chown=appuser:appuser data/embeddings.parquet data/embeddings.parquet
 
 USER appuser
 
-CMD ["python", "-m", "scripts.build_vectordb"]
+CMD ["python", "-m", "scripts.build_vectordb", "--skip-confirm"]

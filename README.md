@@ -72,7 +72,10 @@ interX_rag_chatbot/
 │       └── 001_initial_schema.py   # 초기 스키마 (vector 익스텐션 + documents 테이블)
 ├── scripts/
 │   ├── __init__.py
-│   └── build_vectordb.py           # KorQuAD 로딩 + 임베딩 생성 + DB 적재
+│   ├── embed_and_export.py         # KorQuAD 로딩 + 임베딩 생성 → parquet 저장 (1회 실행)
+│   └── build_vectordb.py           # parquet → pgvector DB 적재 (임베딩 API 불필요)
+├── data/
+│   └── embeddings.parquet          # 사전 생성된 임베딩 데이터
 ├── tests/
 │   ├── __init__.py
 │   ├── conftest.py                 # pytest fixtures (mock_rag, AsyncClient)
@@ -120,7 +123,8 @@ Copy-Item .env.example .env
 
 #### 2. VectorDB 구축 (최초 1회)
 
-Alembic 마이그레이션 실행 후 KorQuAD 임베딩을 생성하여 PostgreSQL에 저장합니다.
+사전 생성된 `data/embeddings.parquet`를 읽어 PostgreSQL에 적재합니다.
+임베딩 API 호출 없이 동작하므로 빠르게 완료됩니다.
 
 ```bash
 # Linux / Git Bash / PowerShell 공통
@@ -213,12 +217,15 @@ alembic upgrade head
 
 #### 4. VectorDB 구축
 
-```bash
-# 전체 데이터 구축
-python -m scripts.build_vectordb --limit 0
+임베딩 생성과 DB 적재를 분리하여 실행합니다.
 
-# 일부만 구축 (빠른 테스트용)
-python -m scripts.build_vectordb --limit 1000
+```bash
+# 4-1. 임베딩 생성 → parquet 저장 (임베딩 API 필요, 1회만 실행)
+python -m scripts.embed_and_export          # 전체
+python -m scripts.embed_and_export --limit 1000  # 일부만
+
+# 4-2. parquet → DB 적재 (임베딩 API 불필요)
+python -m scripts.build_vectordb
 ```
 
 #### 5. API 서버 실행
