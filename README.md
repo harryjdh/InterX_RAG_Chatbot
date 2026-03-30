@@ -464,13 +464,14 @@ http://localhost:8000/redoc
 | `DB_POOL_MIN_SIZE` | DB 커넥션 풀 최소 크기 | 2 |
 | `DB_POOL_MAX_SIZE` | DB 커넥션 풀 최대 크기 | 10 |
 | `HEALTH_DB_TIMEOUT` | DB 헬스체크 타임아웃 (초) | 5.0 |
-| `HEALTH_EMBEDDING_TIMEOUT` | Embedding 헬스체크 타임아웃 (초) | 30.0 |
-| `HEALTH_LLM_TIMEOUT` | LLM 헬스체크 타임아웃 (초) | 120.0 |
+| `HEALTH_EMBEDDING_TIMEOUT` | Embedding 헬스체크 타임아웃 (초) | 10.0 |
+| `HEALTH_LLM_TIMEOUT` | LLM 헬스체크 타임아웃 (초) | 10.0 |
 | `LOG_LEVEL` | 로그 레벨 (DEBUG/INFO/WARNING/ERROR) | INFO |
 | `DOCS_ENABLED` | Swagger UI 활성화 여부 | False |
 | `CORS_ORIGINS` | 허용 오리진 JSON 배열 (예: `["https://example.com"]`) | `["*"]` |
 | `METRICS_TOKEN` | `/metrics` Bearer 토큰 (미설정 시 인증 없음) | - |
 | `RATE_LIMIT` | IP당 요청 상한 (SlowAPI 형식) | 20/minute |
+| `MAX_CONCURRENT_STREAMS` | 워커당 동시 SSE 스트리밍 상한 (총 상한 = 값 × WORKERS) | 50 |
 | `WORKERS` | uvicorn 워커 수 (Docker) | 4 |
 
 > `DB_POOL_MAX_SIZE × WORKERS ≤ PostgreSQL max_connections` 를 유지하세요.
@@ -580,7 +581,7 @@ make sync        # 프로덕션
 make sync-dev    # 개발
 ```
 
-`.in` 파일에 직접 의존성을 명시하고 `pip-compile --generate-hashes`로 전체 의존성 트리를 고정합니다. `--generate-hashes` 옵션으로 각 패키지의 SHA-256 해시를 lock file에 기록하여, 설치 시 단 1비트라도 변조된 패키지가 있으면 pip이 설치를 거부합니다 (Supply Chain Security).
+`.in` 파일에 직접 의존성을 명시하고 `pip-compile`로 전체 의존성 트리를 버전 고정합니다.
 
 | 파일 | 용도 |
 |------|------|

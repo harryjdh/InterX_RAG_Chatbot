@@ -80,14 +80,14 @@ async def test_chat_retrieval_error_returns_502(client, mock_rag):
     mock_rag.answer = AsyncMock(side_effect=RetrievalError("임베딩 API 오류"))
     response = await client.post("/v1/chat", json={"query": "질문"})
     assert response.status_code == 502
-    assert "검색 오류" in response.json()["detail"]
+    assert "문서 검색" in response.json()["detail"]
 
 
 async def test_chat_llm_error_returns_502(client, mock_rag):
     mock_rag.answer = AsyncMock(side_effect=LLMError("LLM 호출 실패"))
     response = await client.post("/v1/chat", json={"query": "질문"})
     assert response.status_code == 502
-    assert "LLM 오류" in response.json()["detail"]
+    assert "응답 생성" in response.json()["detail"]
 
 
 async def test_chat_circuit_breaker_open_returns_503(client, mock_rag):
