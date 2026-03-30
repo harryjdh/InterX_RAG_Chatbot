@@ -77,6 +77,7 @@ async def lifespan(app: FastAPI):
             raise ValueError(f"{var}이(가) 설정되지 않았습니다. .env 파일을 확인하세요.")
     try:
         app.state.rag = await NaiveRAG.create()
+        await app.state.rag.vectordb.ensure_schema()
     except Exception:
         logger.critical("애플리케이션 시작 실패: RAG 초기화 중 오류 발생", exc_info=True)
         raise

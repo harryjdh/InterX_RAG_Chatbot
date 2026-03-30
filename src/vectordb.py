@@ -35,6 +35,26 @@ class VectorDB:
         )
         return cls(pool)
 
+    async def ensure_schema(self) -> None:
+        """vector 확장과 documents 테이블이 없으면 생성합니다 (멱등).
+
+        alembic 마이그레이션 미실행 환경(docker compose up 직후 등)에서도
+        API가 즉시 동작할 수 있도록 보장합니다.
+        alembic이 이미 실행된 환경에서는 IF NOT EXISTS로 인해 아무 변화가 없습니다.
+        """
+        async with self._pool.acquire(timeout=_ACQUIRE_TIMEOUT) as conn:
+            await conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
+            await conn.execute(f"""
+                CREATE TABLE IF NOT EXISTS documents (
+                    id          SERIAL PRIMARY KEY,
+                    content     TEXT NOT NULL,
+                    title       TEXT,
+                    embedding   vector({config.EMBEDDING_DIM}),
+                    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+        logger.info("스키마 확인 완료 (EMBEDDING_DIM=%d)", config.EMBEDDING_DIM)
+
     async def create_index(self):
         """
         벡터 검색 인덱스를 생성합니다. 데이터 로드 후 호출하세요.

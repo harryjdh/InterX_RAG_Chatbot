@@ -83,7 +83,7 @@ class LLMClient:
 
         for attempt in range(_STREAM_RETRIES + 1):
             # 매 시도 전 CB 상태 확인 (OPEN이면 CircuitBreakerOpen 발생)
-            await self._cb._check_state()
+            await self._cb.check_state()
 
             chunks_yielded = 0
             stream = None  # 재시도 시 이전 스트림을 추적하여 명시적으로 닫기 위해 초기화
@@ -94,13 +94,13 @@ class LLMClient:
                     chunks_yielded += 1
                     yield chunk
                 # 스트림 전체 완료 시에만 성공 기록
-                await self._cb._record_success()
+                await self._cb.record_success()
                 return
             except CircuitBreakerOpen:
                 raise
             except Exception as exc:
                 # 스트림 생성 실패와 mid-stream 단절 모두 CB 실패로 기록
-                await self._cb._record_failure(exc)
+                await self._cb.record_failure(exc)
                 if chunks_yielded > 0 or attempt >= _STREAM_RETRIES:
                     raise
                 # 재시도 전 이전 HTTP 스트림 연결을 명시적으로 닫아 커넥션 풀 누수 방지.

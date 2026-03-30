@@ -75,15 +75,15 @@ class CircuitBreaker:
 
     async def call(self, func: Callable, *args, **kwargs):
         """서킷 브레이커를 통해 비동기 함수를 호출합니다."""
-        await self._check_state()
+        await self.check_state()
         try:
             result = await func(*args, **kwargs)
-            await self._record_success()
+            await self.record_success()
             return result
         except CircuitBreakerOpen:
             raise
         except Exception as exc:
-            await self._record_failure(exc)
+            await self.record_failure(exc)
             raise
 
     # --- 상태 읽기/쓰기 ---
@@ -139,7 +139,7 @@ class CircuitBreaker:
 
     # --- 상태 전이 ---
 
-    async def _check_state(self) -> None:
+    async def check_state(self) -> None:
         async with self._state_lock():
             state, failures, successes, opened_at = await self._get_state()
             if state == CircuitState.OPEN:
@@ -157,7 +157,7 @@ class CircuitBreaker:
                         f"서킷 열림 [{self._name}]: {remaining:.0f}s 후 재시도 가능"
                     )
 
-    async def _record_success(self) -> None:
+    async def record_success(self) -> None:
         async with self._state_lock():
             state, failures, successes, opened_at = await self._get_state()
             if state == CircuitState.HALF_OPEN:
@@ -173,10 +173,10 @@ class CircuitBreaker:
                 # 성공 시 연속 실패 카운터 리셋
                 await self._set_state(state, 0, successes, opened_at)
 
-    async def _record_failure(self, exc: Exception) -> None:
+    async def record_failure(self, exc: Exception) -> None:
         async with self._state_lock():
             state, failures, successes, opened_at = await self._get_state()
-            # OPEN 상태는 _check_state에서 이미 차단 — 경쟁 상태 방어
+            # check_state에서 이미 차단된 OPEN 상태 — 경쟁 상태 방어
             if state == CircuitState.OPEN:
                 return
 
