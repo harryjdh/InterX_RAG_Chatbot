@@ -90,6 +90,9 @@ limiter = Limiter(
     storage_uri=config.REDIS_URL or "memory://",
 )
 
+# 워커 프로세스당 활성 SSE 스트림 수 (asyncio 단일 스레드 내 원자적 접근)
+_active_streams: int = 0
+
 app = FastAPI(
     title="RAG Chatbot API",
     description="KorQuAD 기반 한국어 RAG 챗봇 API",
@@ -105,7 +108,10 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=config.CORS_ORIGINS,
-    allow_credentials=True,
+    # allow_origins=["*"] 와 allow_credentials=True 의 동시 허용을 차단합니다.
+    # Starlette은 wildcard origin 요청에 요청 Origin을 그대로 에코하므로,
+    # 두 옵션이 함께 설정되면 임의 도메인의 credentialed 요청이 허용됩니다.
+    allow_credentials=config.CORS_ORIGINS != ["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -231,12 +237,44 @@ async def chat_stream(request: Request, response: Response, body: ChatRequest, r
     - `event: error` / `data: {"error": "...", "type": "retrieval|llm|timeout|unknown"}` — 오류 발생
     - `event: done` / `data: [DONE]` — 스트림 종료
     """
+    # 전역 동시 SSE 연결 수 상한 초과 시 조기 거절.
+    # 제너레이터 진입 전에 확인하여 클라이언트에 즉시 503을 반환합니다.
+    if _active_streams >= config.MAX_CONCURRENT_STREAMS:
+        raise HTTPException(
+            status_code=503,
+            detail=f"동시 스트리밍 연결이 최대치({config.MAX_CONCURRENT_STREAMS})에 도달했습니다. 잠시 후 재시도하세요.",
+        )
+
     async def event_generator():
         # 미들웨어가 request_id_var를 리셋한 후에도 스트리밍 구간 로그에 request_id가
         # 올바르게 기록되도록 제너레이터 진입 시점에 컨텍스트를 재설정합니다.
         _token = request_id_var.set(request.state.request_id)
+
+        # retrieve() + LLM TTFB 구간(첫 번째 청크 도착 전)에서도 연결 해제를 감지하기 위해
+        # 별도 태스크에서 0.5초 주기로 연결 상태를 폴링합니다.
+        # _done_event: 스트리밍 종료 신호 — 정상 완료 후 watcher가 태스크를 취소하는
+        # race condition을 방지하기 위해 done 이벤트 yield 직전에 설정합니다.
+        _done_event = asyncio.Event()
+        _current_task = asyncio.current_task()
+
+        async def _disconnect_watcher():
+            while not _done_event.is_set():
+                if await request.is_disconnected():
+                    # _done_event가 await 중 설정되었을 수 있으므로 이중 확인
+                    if not _done_event.is_set():
+                        logger.info(
+                            "연결 해제 조기 감지 (retrieve/TTFB 구간) [%s]",
+                            request.state.request_id,
+                        )
+                        _current_task.cancel()
+                    return
+                await asyncio.sleep(0.5)
+
+        _watcher = asyncio.create_task(_disconnect_watcher())
         # try 바깥에서 generator를 생성해야 outer finally에서 aclose()로 즉시 정리 가능합니다.
         stream = rag.answer_stream(body.query)
+        global _active_streams
+        _active_streams += 1
         try:
             try:
                 async with asyncio.timeout(config.REQUEST_TIMEOUT):
@@ -247,7 +285,7 @@ async def chat_stream(request: Request, response: Response, body: ChatRequest, r
                         data = json.dumps({"delta": chunk}, ensure_ascii=False)
                         yield f"event: delta\ndata: {data}\n\n"
             except asyncio.CancelledError:
-                # uvicorn이 연결을 강제 취소한 경우 — CancelledError를 소비하여
+                # uvicorn 또는 watcher가 연결을 강제 취소한 경우 — CancelledError를 소비하여
                 # finally 블록의 yield가 재진입 CancelledError를 일으키지 않도록 합니다.
                 logger.info("스트리밍 태스크 취소됨 (CancelledError) [%s]", request.state.request_id)
                 return
@@ -270,12 +308,23 @@ async def chat_stream(request: Request, response: Response, body: ChatRequest, r
                 error = json.dumps({"error": "예상치 못한 오류가 발생했습니다.", "type": StreamErrorType.UNKNOWN}, ensure_ascii=False)
                 yield f"event: error\ndata: {error}\n\n"
             finally:
+                # _done_event를 yield 전에 설정하여 race condition 방지:
+                # 정상 완료 직후 HTTP 연결이 닫혀도 watcher가 태스크를 취소하지 않습니다.
+                _done_event.set()
                 yield "event: done\ndata: [DONE]\n\n"
         finally:
+            # watcher 정리: cancel 전 _done_event가 이미 설정되어 있으므로
+            # watcher는 다음 이벤트 루프 틱에서 안전하게 종료됩니다.
+            _watcher.cancel()
+            try:
+                await _watcher
+            except asyncio.CancelledError:
+                pass
             # disconnect / cancel / timeout / 정상 종료 어떤 경우에도
             # LLM API 스트리밍 연결을 즉시 닫아 upstream 리소스를 회수합니다.
             await stream.aclose()
             request_id_var.reset(_token)
+            _active_streams -= 1
 
     return StreamingResponse(
         event_generator(),

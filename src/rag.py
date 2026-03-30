@@ -106,6 +106,12 @@ class NaiveRAG:
         t0 = time.perf_counter()
 
         results = await self.retrieve(query)
+
+        # 검색 결과가 없으면 LLM 호출 없이 즉시 반환 (임베딩 비용만 발생, LLM 비용 절감)
+        if not results:
+            logger.warning("벡터 검색 결과 0건 — LLM 호출 없이 기본 응답 반환")
+            return "주어진 정보에서 해당 내용을 찾을 수 없습니다."
+
         contexts = [content[:config.MAX_CONTEXT_CHARS] for content, _, _ in results]
         total_chars = sum(len(c) for c in contexts)
         rag_context_chars.observe(total_chars)
@@ -135,6 +141,13 @@ class NaiveRAG:
         t0 = time.perf_counter()
 
         results = await self.retrieve(query)
+
+        # 검색 결과가 없으면 LLM 호출 없이 고정 메시지를 즉시 스트리밍 (LLM 비용 절감)
+        if not results:
+            logger.warning("벡터 검색 결과 0건 — LLM 호출 없이 기본 응답 반환")
+            yield "주어진 정보에서 해당 내용을 찾을 수 없습니다."
+            return
+
         contexts = [content[:config.MAX_CONTEXT_CHARS] for content, _, _ in results]
         total_chars = sum(len(c) for c in contexts)
         rag_context_chars.observe(total_chars)

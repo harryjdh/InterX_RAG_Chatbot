@@ -56,6 +56,10 @@ class Config(BaseSettings):
     # Rate Limiting: IP당 요청 상한 (SlowAPI limits 형식: "N/period")
     RATE_LIMIT: str = "20/minute"
 
+    # SSE 동시 스트리밍 연결 상한 (워커 프로세스당 독립적으로 적용됨)
+    # 총 상한 = MAX_CONCURRENT_STREAMS × WORKERS
+    MAX_CONCURRENT_STREAMS: int = 50
+
     # LLM 비용 상한: 문맥당 최대 글자 수 (초과 시 잘라냄)
     MAX_CONTEXT_CHARS: int = 2000
 
