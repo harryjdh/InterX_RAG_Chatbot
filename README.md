@@ -415,6 +415,7 @@ Authorization: Bearer <METRICS_TOKEN>  # METRICS_TOKEN 설정 시 필수
 | `rag_llm_ttfb_seconds` | Histogram | LLM 첫 청크 응답 시간 (TTFB) |
 | `rag_retrieval_score` | Histogram | 벡터 검색 유사도 점수 (rank별) |
 | `rag_context_chars_total` | Histogram | LLM에 전달된 문맥 총 글자 수 |
+| `rag_circuit_state` | Gauge | 서킷 브레이커 상태 (0=closed, 1=open, 2=half_open, name 레이블) |
 
 ### API 문서 (Swagger UI)
 
@@ -625,7 +626,7 @@ make sync-dev    # 개발
 
 ## DB 마이그레이션 (Alembic)
 
-스키마 변경 이력을 Alembic으로 관리합니다. `build_vectordb.py` 실행 시 `alembic upgrade head`가 자동 선행 실행됩니다.
+스키마 변경 이력을 Alembic으로 관리합니다. `build_vectordb.py` 실행 시 `VectorDB.ensure_schema()`를 호출하여 테이블을 자동 생성합니다 (Alembic 미실행 환경 대응).
 
 ```bash
 # 마이그레이션 적용
