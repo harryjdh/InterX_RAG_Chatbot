@@ -41,7 +41,7 @@ async def retry(
                 base_wait = min(delay * (backoff ** attempt), max_delay)
                 wait = base_wait * (0.5 + random.random() * 0.5)
             logger.warning(
-                "재시도 %d/%d (%.1fs 후): %s", attempt + 1, retries - 1, wait, e
+                "재시도 %d/%d (%.1fs 후): %s", attempt + 1, retries, wait, e
             )
             await asyncio.sleep(wait)
 

@@ -17,6 +17,7 @@
 import asyncio
 import logging
 import time
+from contextlib import asynccontextmanager
 from enum import Enum
 from typing import Callable
 
@@ -57,6 +58,20 @@ class CircuitBreaker:
 
     def _key(self, field: str) -> str:
         return f"cb:{self._name}:{field}"
+
+    @asynccontextmanager
+    async def _state_lock(self):
+        """인메모리 모드: asyncio.Lock / Redis 모드: 분산 락 (TOCTOU 방지)."""
+        if self._redis is None:
+            async with self._lock:
+                yield
+        else:
+            # redis-py의 Lock은 SET NX + PX 기반 분산 락입니다.
+            # timeout: 락 보유 최대 시간(초), blocking_timeout: 획득 대기 최대 시간(초)
+            async with self._redis.lock(
+                self._key("lock"), timeout=1.0, blocking_timeout=2.0
+            ):
+                yield
 
     async def call(self, func: Callable, *args, **kwargs):
         """서킷 브레이커를 통해 비동기 함수를 호출합니다."""
@@ -125,7 +140,7 @@ class CircuitBreaker:
     # --- 상태 전이 ---
 
     async def _check_state(self) -> None:
-        async with self._lock:
+        async with self._state_lock():
             state, failures, successes, opened_at = await self._get_state()
             if state == CircuitState.OPEN:
                 elapsed = time.time() - opened_at
@@ -143,7 +158,7 @@ class CircuitBreaker:
                     )
 
     async def _record_success(self) -> None:
-        async with self._lock:
+        async with self._state_lock():
             state, failures, successes, opened_at = await self._get_state()
             if state == CircuitState.HALF_OPEN:
                 successes += 1
@@ -159,7 +174,7 @@ class CircuitBreaker:
                 await self._set_state(state, 0, successes, opened_at)
 
     async def _record_failure(self, exc: Exception) -> None:
-        async with self._lock:
+        async with self._state_lock():
             state, failures, successes, opened_at = await self._get_state()
             # OPEN 상태는 _check_state에서 이미 차단 — 경쟁 상태 방어
             if state == CircuitState.OPEN:

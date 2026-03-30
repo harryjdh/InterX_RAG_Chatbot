@@ -5,15 +5,15 @@
 
 ## requirements.txt (프로덕션 lock file) 재생성
 lock:
-	pip-compile requirements.in -o requirements.txt --strip-extras
+	pip-compile requirements.in -o requirements.txt --strip-extras --generate-hashes
 
 ## requirements-build.txt (빌드 lock file) 재생성
 lock-build:
-	pip-compile requirements-build.in -o requirements-build.txt --strip-extras
+	pip-compile requirements-build.in -o requirements-build.txt --strip-extras --generate-hashes
 
 ## requirements-dev.txt (개발 lock file) 재생성
 lock-dev:
-	pip-compile requirements-dev.in -o requirements-dev.txt --strip-extras
+	pip-compile requirements-dev.in -o requirements-dev.txt --strip-extras --generate-hashes
 
 ## lock file 전체 재생성
 lock-all: lock lock-build lock-dev

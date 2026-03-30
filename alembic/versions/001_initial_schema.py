@@ -17,6 +17,8 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    from src.config import config as app_config
+
     # vector 익스텐션은 DB 레벨 설치이므로 IF NOT EXISTS 유지 (중복 설치 무해)
     op.execute("CREATE EXTENSION IF NOT EXISTS vector")
     # IF NOT EXISTS 제거: 테이블이 이미 존재하면 Alembic이 명시적으로 오류를 발생시켜
@@ -24,12 +26,12 @@ def upgrade() -> None:
     # 기존 DB(ensure_schema()로 생성된)에서 마이그레이션을 처음 적용할 경우:
     #   alembic stamp head  # 현재 상태를 마이그레이션 완료로 표시
     op.execute(
-        """
+        f"""
         CREATE TABLE documents (
             id          SERIAL PRIMARY KEY,
             content     TEXT NOT NULL,
             title       TEXT,
-            embedding   vector(2560),
+            embedding   vector({app_config.EMBEDDING_DIM}),
             created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """

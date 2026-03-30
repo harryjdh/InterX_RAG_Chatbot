@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import random
 import re
 
 import openai
@@ -85,6 +86,7 @@ class LLMClient:
             await self._cb._check_state()
 
             chunks_yielded = 0
+            stream = None  # 재시도 시 이전 스트림을 추적하여 명시적으로 닫기 위해 초기화
             try:
                 # _create_stream은 CB를 통하지 않음 — 성공/실패를 아래에서 명시적으로 기록
                 stream = await self._create_stream(messages)
@@ -101,7 +103,14 @@ class LLMClient:
                 await self._cb._record_failure(exc)
                 if chunks_yielded > 0 or attempt >= _STREAM_RETRIES:
                     raise
-                wait = min(1.0 * (2.0 ** attempt), 10.0)
+                # 재시도 전 이전 HTTP 스트림 연결을 명시적으로 닫아 커넥션 풀 누수 방지.
+                # chunks_yielded == 0 경로에서만 도달하므로 클라이언트에는 아직 아무것도 전송되지 않은 상태.
+                if stream is not None:
+                    try:
+                        await stream.aclose()
+                    except Exception:
+                        pass
+                wait = min(1.0 * (2.0 ** attempt), 10.0) * (0.5 + random.random() * 0.5)
                 logger.warning(
                     "스트리밍 재연결 시도 %d/%d (%.1fs 후): %s",
                     attempt + 1,

@@ -7,7 +7,8 @@ from contextvars import ContextVar
 from datetime import datetime, timezone
 from enum import Enum
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from prometheus_fastapi_instrumentator import Instrumentator
 from pydantic import BaseModel, Field, field_validator
@@ -65,6 +66,15 @@ class StreamErrorType(str, Enum):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    for var, val in [
+        ("LLM_BASE_URL", config.LLM_BASE_URL),
+        ("EMBEDDING_BASE_URL", config.EMBEDDING_BASE_URL),
+    ]:
+        if not val:
+            logger.critical(
+                "필수 환경변수 %s가 설정되지 않았습니다. .env 파일을 확인하세요.", var
+            )
+            raise ValueError(f"{var}이(가) 설정되지 않았습니다. .env 파일을 확인하세요.")
     try:
         app.state.rag = await NaiveRAG.create()
     except Exception:
@@ -91,7 +101,29 @@ app = FastAPI(
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-Instrumentator().instrument(app).expose(app)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=config.CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+async def _verify_metrics_token(request: Request):
+    """METRICS_TOKEN 설정 시 Bearer 토큰으로 /metrics 엔드포인트를 보호합니다."""
+    if config.METRICS_TOKEN is None:
+        return
+    auth = request.headers.get("Authorization", "")
+    if auth != f"Bearer {config.METRICS_TOKEN.get_secret_value()}":
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+Instrumentator().instrument(app).expose(
+    app,
+    dependencies=[Depends(_verify_metrics_token)],
+)
 
 
 # --- Middleware ---
@@ -120,13 +152,13 @@ async def circuit_breaker_open_handler(request: Request, exc: CircuitBreakerOpen
 @app.exception_handler(RetrievalError)
 async def retrieval_error_handler(request: Request, exc: RetrievalError):
     logger.error("검색 오류 [%s %s]: %s", request.method, request.url.path, exc, exc_info=exc)
-    return JSONResponse(status_code=502, content={"detail": f"검색 오류: {exc}"})
+    return JSONResponse(status_code=502, content={"detail": "문서 검색 중 오류가 발생했습니다."})
 
 
 @app.exception_handler(LLMError)
 async def llm_error_handler(request: Request, exc: LLMError):
     logger.error("LLM 오류 [%s %s]: %s", request.method, request.url.path, exc, exc_info=exc)
-    return JSONResponse(status_code=502, content={"detail": f"LLM 오류: {exc}"})
+    return JSONResponse(status_code=502, content={"detail": "응답 생성 중 오류가 발생했습니다."})
 
 
 @app.exception_handler(asyncio.TimeoutError)
@@ -173,7 +205,10 @@ class ReadyResponse(BaseModel):
 
 # --- Endpoints ---
 
-@app.post("/chat", response_model=ChatResponse, summary="챗봇 질의 (non-streaming)")
+v1_router = APIRouter(prefix="/v1")
+
+
+@v1_router.post("/chat", response_model=ChatResponse, summary="챗봇 질의 (non-streaming)")
 @limiter.limit(config.RATE_LIMIT)
 async def chat(request: Request, response: Response, body: ChatRequest, rag: NaiveRAG = Depends(get_rag)):
     """
@@ -185,7 +220,7 @@ async def chat(request: Request, response: Response, body: ChatRequest, rag: Nai
     return ChatResponse(answer=answer)
 
 
-@app.post("/chat/stream", summary="챗봇 질의 (streaming SSE)")
+@v1_router.post("/chat/stream", summary="챗봇 질의 (streaming SSE)")
 @limiter.limit(config.RATE_LIMIT)
 async def chat_stream(request: Request, response: Response, body: ChatRequest, rag: NaiveRAG = Depends(get_rag)):
     """
@@ -200,34 +235,46 @@ async def chat_stream(request: Request, response: Response, body: ChatRequest, r
         # 미들웨어가 request_id_var를 리셋한 후에도 스트리밍 구간 로그에 request_id가
         # 올바르게 기록되도록 제너레이터 진입 시점에 컨텍스트를 재설정합니다.
         _token = request_id_var.set(request.state.request_id)
+        # try 바깥에서 generator를 생성해야 outer finally에서 aclose()로 즉시 정리 가능합니다.
+        stream = rag.answer_stream(body.query)
         try:
             try:
                 async with asyncio.timeout(config.REQUEST_TIMEOUT):
-                    async for chunk in rag.answer_stream(body.query):
+                    async for chunk in stream:
                         if await request.is_disconnected():
                             logger.info("클라이언트 연결 해제 감지 — 스트리밍 중단 [%s]", request.state.request_id)
                             return
                         data = json.dumps({"delta": chunk}, ensure_ascii=False)
                         yield f"event: delta\ndata: {data}\n\n"
+            except asyncio.CancelledError:
+                # uvicorn이 연결을 강제 취소한 경우 — CancelledError를 소비하여
+                # finally 블록의 yield가 재진입 CancelledError를 일으키지 않도록 합니다.
+                logger.info("스트리밍 태스크 취소됨 (CancelledError) [%s]", request.state.request_id)
+                return
             except asyncio.TimeoutError:
                 error = json.dumps({"error": "요청 시간이 초과되었습니다.", "type": StreamErrorType.TIMEOUT}, ensure_ascii=False)
                 yield f"event: error\ndata: {error}\n\n"
             except RetrievalError as e:
-                error = json.dumps({"error": str(e), "type": StreamErrorType.RETRIEVAL}, ensure_ascii=False)
+                logger.error("스트리밍 중 검색 오류: %s", e, exc_info=e)
+                error = json.dumps({"error": "문서 검색 중 오류가 발생했습니다.", "type": StreamErrorType.RETRIEVAL}, ensure_ascii=False)
                 yield f"event: error\ndata: {error}\n\n"
             except LLMError as e:
-                error = json.dumps({"error": str(e), "type": StreamErrorType.LLM}, ensure_ascii=False)
+                logger.error("스트리밍 중 LLM 오류: %s", e, exc_info=e)
+                error = json.dumps({"error": "응답 생성 중 오류가 발생했습니다.", "type": StreamErrorType.LLM}, ensure_ascii=False)
                 yield f"event: error\ndata: {error}\n\n"
             except CircuitBreakerOpen as e:
                 error = json.dumps({"error": str(e), "type": StreamErrorType.CIRCUIT_OPEN}, ensure_ascii=False)
                 yield f"event: error\ndata: {error}\n\n"
             except Exception as e:
                 logger.exception("스트리밍 중 예상치 못한 오류 발생")
-                error = json.dumps({"error": str(e), "type": StreamErrorType.UNKNOWN}, ensure_ascii=False)
+                error = json.dumps({"error": "예상치 못한 오류가 발생했습니다.", "type": StreamErrorType.UNKNOWN}, ensure_ascii=False)
                 yield f"event: error\ndata: {error}\n\n"
             finally:
                 yield "event: done\ndata: [DONE]\n\n"
         finally:
+            # disconnect / cancel / timeout / 정상 종료 어떤 경우에도
+            # LLM API 스트리밍 연결을 즉시 닫아 upstream 리소스를 회수합니다.
+            await stream.aclose()
             request_id_var.reset(_token)
 
     return StreamingResponse(
@@ -239,6 +286,9 @@ async def chat_stream(request: Request, response: Response, body: ChatRequest, r
             "Connection": "keep-alive",
         },
     )
+
+
+app.include_router(v1_router)
 
 
 @app.get("/health", response_model=HealthResponse, summary="헬스 체크")

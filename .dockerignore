@@ -19,3 +19,5 @@ tests/
 pytest.ini
 requirements-dev.txt
 *.md
+alembic/
+alembic.ini
