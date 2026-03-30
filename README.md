@@ -1,51 +1,43 @@
 # RAG 기반 한국어 QA 챗봇
 
+![CI](https://github.com/harryjdh/InterX_RAG_Chatbot/actions/workflows/ci.yml/badge.svg)
+![Python](https://img.shields.io/badge/python-3.11.12-blue)
+![Docker](https://img.shields.io/badge/docker-ready-blue)
+
 KorQuAD v1.0 데이터셋과 pgvector(PostgreSQL)를 사용한 NaiveRAG 챗봇 시스템입니다.
 
 ---
 
 ## 아키텍처 개요
 
-```
-클라이언트
-    │
-    ▼
-[FastAPI] X-Request-ID 미들웨어 → CORS → Rate Limiter (SlowAPI)
-    │
-    ▼
-[Pydantic] ChatRequest 입력 검증 (min_length=1, max_length, 공백 차단)
-    │
-    ▼
-[NaiveRAG Pipeline]
-    │
-    ├─[1] EmbeddingClient.embed(query)
-    │      → Qwen3-Embedding-4B API (재시도: 지수 백오프 + jitter)
-    │      → Circuit Breaker (Closed / Open / Half-Open)
-    │
-    ├─[2] VectorDB.search(embedding, top_k)
-    │      → PostgreSQL + pgvector (코사인 유사도 기준 상위 K개)
-    │
-    ├─[3] _build_prompt(query, contexts)
-    │      → 검색된 문맥 + 질문 조합
-    │
-    └─[4] LLMClient.generate() / generate_stream()
-           → Qwen3-Next-80B API (non-streaming / SSE streaming)
-           → <think> 블록 자동 제거 (Qwen3 thinking mode 대응)
-           → Circuit Breaker (Closed / Open / Half-Open)
-           → 클라이언트 연결 해제 시 stream.aclose() 즉시 회수 (asyncio.CancelledError 처리)
-    │
-    ▼
-[Global Exception Handler]
-    RetrievalError → HTTP 502
-    LLMError       → HTTP 502
-    TimeoutError   → HTTP 504
-    CircuitOpen    → HTTP 503
-    │
-    ▼
-[Middleware] 응답 헤더에 X-Request-ID 추가
-    │
-    ▼
-클라이언트 응답
+```mermaid
+flowchart TD
+    Client([클라이언트])
+
+    subgraph MW["FastAPI 미들웨어"]
+        direction LR
+        MID["X-Request-ID 할당\nCORS · Rate Limiter"]
+        VAL["Pydantic 입력 검증\nChatRequest"]
+        MID --> VAL
+    end
+
+    subgraph RAG["NaiveRAG Pipeline"]
+        direction TB
+        EMB["① EmbeddingClient.embed()\nQwen3-Embedding-4B\n지수 백오프 + jitter · Circuit Breaker"]
+        VDB["② VectorDB.search()\nPostgreSQL + pgvector\n코사인 유사도 Top-K"]
+        PROMPT["③ _build_prompt()\n문맥 + 질문 조합"]
+        LLM["④ LLMClient.generate()\nQwen3-Next-80B\n&lt;think&gt; 블록 제거 · Circuit Breaker\n연결 해제 시 stream.aclose()"]
+        EMB --> VDB --> PROMPT --> LLM
+    end
+
+    EXC["Global Exception Handler\nRetrievalError → 502 · LLMError → 502\nTimeoutError → 504 · CircuitOpen → 503"]
+    RES["응답\nX-Request-ID 헤더 포함"]
+
+    Client -->|요청| MID
+    VAL --> RAG
+    LLM -->|성공| RES
+    RAG -->|예외| EXC --> RES
+    RES -->|응답| Client
 ```
 
 ---
@@ -61,7 +53,7 @@ interX_rag_chatbot/
 ├── Dockerfile.build                # VectorDB 구축 전용 이미지
 ├── Dockerfile.build.dockerignore   # 빌드 이미지 전용 ignore
 ├── .dockerignore                   # API 이미지 전용 ignore
-├── docker-compose.yml              # PostgreSQL + API 서버 구성
+├── docker-compose.yml              # PostgreSQL + Redis + API 서버 구성
 ├── alembic.ini                     # Alembic 마이그레이션 설정
 ├── pytest.ini                      # pytest 설정 (asyncio_mode=auto)
 ├── requirements.txt                # 프로덕션 의존성 (pip-compile pinned)
@@ -327,6 +319,32 @@ data: [DONE]
 
 **연결 해제 처리**: 클라이언트가 SSE 연결을 끊으면 `request.is_disconnected()` 감지 후 스트리밍을 중단합니다. uvicorn이 태스크를 강제 취소하는 경우(`asyncio.CancelledError`)도 명시적으로 처리하며, 두 경우 모두 `stream.aclose()`를 호출하여 LLM API 스트리밍 연결을 즉시 회수합니다.
 
+```mermaid
+sequenceDiagram
+    participant C as 클라이언트
+    participant API as FastAPI
+    participant EMB as Embedding API
+    participant VDB as PostgreSQL
+    participant LLM as LLM API
+
+    C->>+API: POST /v1/chat/stream
+    API->>API: 입력 검증 · Request-ID 할당<br/>동시 스트림 수 확인
+    API->>+EMB: embed(query)
+    EMB-->>-API: embedding vector
+    API->>+VDB: search(embedding, top_k)
+    VDB-->>-API: contexts
+    API->>+LLM: generate_stream(prompt)
+    loop 스트리밍 청크
+        LLM-->>API: chunk
+        API-->>C: event: delta
+    end
+    LLM-->>-API: 완료
+    API-->>C: event: done
+    API-->>-C: 연결 종료
+
+    note over C,API: 클라이언트 조기 종료 시<br/>watcher 감지 → stream.aclose()
+```
+
 클라이언트 측 이벤트 처리 (JavaScript):
 ```javascript
 // EventSource는 GET 전용이므로, POST SSE는 fetch + ReadableStream으로 처리합니다.
@@ -406,11 +424,18 @@ http://localhost:8000/redoc
 
 외부 API(Embedding, LLM) 장애 시 연쇄 실패를 차단하는 3상태 서킷 브레이커가 적용됩니다.
 
-```
-[Closed] ──실패 누적──▶ [Open] ──복구 대기(recovery_timeout)──▶ [Half-Open]
-    ▲                                                                   │
-    └────────────────── 탐색 호출 성공 ───────────────────────────────┘
-                        (실패 시 → Open 복귀)
+```mermaid
+stateDiagram-v2
+    [*] --> Closed
+
+    Closed --> Open : 실패 누적 (≥ failure_threshold)
+    Open --> HalfOpen : 복구 대기 (recovery_timeout 경과)
+    HalfOpen --> Closed : 탐색 성공 (≥ success_threshold)
+    HalfOpen --> Open : 탐색 실패
+
+    Closed : Closed\n정상 통과
+    Open : Open\n즉시 거부 (HTTP 503)
+    HalfOpen : Half-Open\n탐색 호출 허용
 ```
 
 | 상태 | 동작 |

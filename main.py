@@ -303,7 +303,7 @@ async def chat_stream(request: Request, response: Response, body: ChatRequest, r
             except CircuitBreakerOpen as e:
                 error = json.dumps({"error": str(e), "type": StreamErrorType.CIRCUIT_OPEN}, ensure_ascii=False)
                 yield f"event: error\ndata: {error}\n\n"
-            except Exception as e:
+            except Exception:
                 logger.exception("스트리밍 중 예상치 못한 오류 발생")
                 error = json.dumps({"error": "예상치 못한 오류가 발생했습니다.", "type": StreamErrorType.UNKNOWN}, ensure_ascii=False)
                 yield f"event: error\ndata: {error}\n\n"

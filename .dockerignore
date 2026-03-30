@@ -9,6 +9,7 @@ __pycache__
 *.pyo
 *.pyd
 .pytest_cache
+.ruff_cache
 .venv
 venv
 *.egg-info
@@ -21,3 +22,4 @@ requirements-dev.txt
 *.md
 alembic/
 alembic.ini
+Dockerfile*

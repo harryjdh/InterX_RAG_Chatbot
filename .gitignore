@@ -8,3 +8,7 @@ venv/
 dist/
 .DS_Store
 .claude/
+.ruff_cache/
+.pytest_cache/
+.idea/
+.vscode/
