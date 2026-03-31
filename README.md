@@ -63,8 +63,7 @@ interX_rag_chatbot/
 ├── requirements-dev.txt            # 개발/테스트 의존성 (pinned)
 ├── requirements-dev.in             # 개발/테스트 직접 의존성
 ├── Makefile                        # lock/sync/migrate/test/up 등 표준 명령
-├── .env                            # API 키 및 환경변수 (gitignore 대상)
-├── .env.example                    # 환경변수 템플릿
+├── .env.example                    # API 키 및 환경변수 템플릿
 ├── alembic/
 │   ├── env.py                      # Alembic 실행 환경 (asyncio + SQLAlchemy)
 │   ├── script.py.mako              # 마이그레이션 파일 템플릿
@@ -419,7 +418,7 @@ Authorization: Bearer <METRICS_TOKEN>  # METRICS_TOKEN 설정 시 필수
 
 ### API 문서 (Swagger UI)
 
-기본 비활성화. `.env`에 `DOCS_ENABLED=True` 설정 후 접근:
+기본 활성화. `.env`에 `DOCS_ENABLED=False` 설정 후 차단:
 
 ```
 http://localhost:8000/docs
